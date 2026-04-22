@@ -16,7 +16,7 @@ backbone. You must set up the following before running anything:
 ### 1. Clone the BitVLA repository (provides `bitvla` and `prismatic` packages)
 
 ```bash
-git clone https://github.com/microsoft/BitVLA.git repos/BitVLA
+git clone https://github.com/ustcwhy/BitVLA.git repos/BitVLA
 ```
 
 ### 2. Clone LIBERO simulator
@@ -86,11 +86,11 @@ bash run_reproduce.sh     # train (~3h on RTX 5090) + rollout (~2.7h)
 
 ---
 
-## 1. Abstract (draft)
+## 1. Abstract 
 
-Vision-Language-Action (VLA) models have emerged as capable generalist robot policies, but their practical deployment is severely limited by memory and compute requirements. BitVLA — a 1-bit post-training-quantized VLA — reduces the model footprint by 4–8× while maintaining 85.8% success on the challenging LIBERO-Long benchmark. However, aggressive quantization introduces systematic precision loss in action prediction, particularly in multi-object manipulation scenarios.
+Vision-Language-Action (VLA) models have emerged as capable generalist robot policies, but their practical deployment is severely limited by memory and compute requirements. BitVLA — a 1-bit post-training-quantized VLA — aggressively reduces the model footprint while remaining competitive on LIBERO benchmarks; in our reproduction on LIBERO-Long (the base paper's result we verify as the first deliverable), the frozen BitVLA backbone attains **85.8%** success, close to the paper's reported 87.6%. However, aggressive quantization still introduces systematic precision loss in action prediction, particularly in multi-object manipulation scenarios.
 
-We propose **Focused Action Refinement (FAR)**, a trainable refinement module that corrects the frozen BitVLA's action predictions without modifying the backbone. FAR introduces three key design choices: (i) a **triple cascaded attention** architecture that keeps action self-attention, action–chunk-query cross-attention, and action–vision focused-attention in **independent softmax branches**, avoiding the query-side shortcut that arises when modalities share a single softmax; (ii) a **patch-level focus mechanism** that selects the top-k=256 most relevant visual patches per action token, paired with an element-wise channel gate that suppresses task-irrelevant visual channels; (iii) a **dual-level residual anchoring** scheme that bounds the refinement output at both token-level (`delta_scale=0.30 × tanh`) and pose-level (`±0.10 × tanh`) deviations from the frozen baseline, ensuring stable closed-loop rollouts.
+We propose **Focused Action Refinement (FAR)**, a trainable refinement module that corrects the frozen BitVLA's action predictions without modifying the backbone. FAR introduces three key design choices: (i) a **triple cascaded attention** architecture that keeps action self-attention, action–query cross-attention, and action–vision cross-attention in **independent softmax branches**, avoiding the query-side shortcut that arises when modalities share a single softmax; (ii) a **patch-level top-k visual selection** mechanism that selects the top-k=256 most relevant visual patches per action token, paired with an element-wise channel gate that suppresses task-irrelevant visual channels; (iii) a **dual-level residual anchoring** scheme that bounds the refinement output at both token-level (`delta_scale=0.30 × tanh`) and pose-level (`±0.10 × tanh`) deviations from the frozen baseline, ensuring stable closed-loop rollouts.
 
 On LIBERO-Long (500 episodes, seed=7), FAR achieves **88.6% success** versus **85.8% baseline** — a **+2.8pt absolute improvement**. The gain is concentrated in multi-object spatial manipulation tasks (task 4: +16pt from 76% to 92%; task 6: +12pt from 68% to 80%). FAR adds only 120M trainable parameters on top of the 3.5B frozen backbone (3.4% parameter ratio) and trains in approximately 3 hours on a single RTX 5090.
 
@@ -108,9 +108,9 @@ Large Vision-Language-Action (VLA) models such as OpenVLA, BitVLA, and π₀ hav
 
 We present **Focused Action Refinement (FAR)**, a refinement module designed specifically for frozen 1-bit VLAs. Our contributions are:
 
-1. **Triple cascaded attention** — action self-attention, action-query cross-attention, and action-vision focused-attention are kept in three independent softmax branches fused by an MLP, avoiding the query-side shortcut we empirically observe in single-softmax mixed-attention designs.
+1. **Triple cascaded attention** — action self-attention, action–query cross-attention, and action–vision cross-attention are kept in three independent softmax branches fused by an MLP, avoiding the query-side shortcut we empirically observe in single-softmax mixed-attention designs.
 
-2. **Patch-level visual focus with channel-level gating** — per-(action token, attention head) independent top-k=256 selection over image patches, followed by an element-wise sigmoid channel gate, enables the module to route task-relevant visual evidence to each action token.
+2. **Patch-level top-k visual selection with channel-level gating** — per-(action token, attention head) independent top-k=256 selection over image patches, followed by an element-wise sigmoid channel gate, enables the module to route task-relevant visual evidence to each action token.
 
 3. **Dual-level residual anchoring** — refinement is bounded at both the hidden-token level and the final pose level by tanh-squashed scales, guaranteeing that the module's deviation from the frozen baseline is always within a safe range. This makes FAR a strict improvement over pure baseline in the worst case.
 
@@ -122,20 +122,20 @@ Evaluated on LIBERO-Long, FAR achieves **88.6%** rollout success, a **+2.8pt abs
 
 ### 3.1 Vision-Language-Action Models
 
-- **OpenVLA** (Kim et al., 2024): 7B-parameter open-source VLA based on LLaMA-2, trained on Open-X Embodiment.
-- **BitVLA** (Chen et al., 2026): 1-bit W1.58-A8 post-quantized VLA, 4–8× smaller than OpenVLA, achieves 85.8%–95.0% on LIBERO suites.
-- **π₀** (Black et al., 2024): Flow-matching VLA, strong on dexterous manipulation.
+- **OpenVLA** (Kim et al., 2024): open-source VLA adapted from a pretrained multimodal backbone, trained on the Open-X Embodiment dataset.
+- **BitVLA** (Wang et al., 2025): 1-bit W1.58-A8 post-quantized VLA, significantly reducing memory and compute while remaining competitive on LIBERO suites; serves as the frozen base policy in this work.
+- **π₀** (Black et al., 2024): flow-matching VLA, strong on dexterous manipulation.
 
 ### 3.2 Efficient Adaptation of Large Models
 
-- **LoRA** (Hu et al., 2021): Low-rank adapters for parameter-efficient fine-tuning; updates backbone weights with small rank adapters.
-- **VLA-Adapter** (Wang et al., 2025): A residual adapter for pre-trained VLAs that mixes raw policy features and action queries in a single attention.
+- **LoRA** (Hu et al., 2022): low-rank adapters for parameter-efficient fine-tuning; injects small rank updates into pretrained backbone weights.
 
-FAR differs from both LoRA and VLA-Adapter: LoRA still modifies backbone weights; VLA-Adapter uses mixed attention which can induce query-side shortcuts. FAR keeps the backbone strictly frozen and uses independent attention branches for anti-shortcut property.
+LoRA and its variants are widely used for vision-language and robotics models, but they still modify backbone representations, which can alter the deployment characteristics of highly optimized models such as quantized VLAs. In contrast, FAR keeps the 1-bit backbone strictly frozen and shifts all adaptation into a separate refinement module, preserving the original inference cost and numerical behavior of BitVLA.
 
-### 3.3 Focused Attention in Policy Models
+### 3.3 Structured Attention for Multimodal Policies
 
-- **FocusVLA** (Zhang et al., 2026): Introduced modality-cascaded attention and patch-level focus for VLA policy training. FAR adapts their attention design to the **frozen-backbone inference setting** and adds token-level residual refinement with dual-level anchoring.
+- **Multimodal Transformer** (Tsai et al., 2019): introduced cross-modal attention for unaligned multimodal sequences, a foundational design for controlling information flow between modalities.
+- **FocusVLA** (Zhang et al., 2026): introduced modality-cascaded attention with patch-level top-k visual selection and channel gating for end-to-end VLA policy training, showing that explicit modality separation and selective visual utilization substantially improve action prediction. **FAR is most directly inspired by FocusVLA**; we adapt their attention design to the **frozen-backbone inference setting** and add a token-level residual refinement with dual-level anchoring.
 
 ---
 
@@ -143,58 +143,24 @@ FAR differs from both LoRA and VLA-Adapter: LoRA still modifies backbone weights
 
 ### 4.1 Architecture Overview
 
+![FAR architecture](Report/figures/architecture.png)
+
+The frozen BitVLA backbone (3.5B params, 30 layers, W1.58-A8) consumes RGB images (agent + wrist), a language instruction, and proprioception, and exposes three detached intermediates with no gradient flow:
+- layer-0 image tokens $H_0 \in \mathbb{R}^{B \times 512 \times 2560}$
+- top-layer action tokens $H_{\text{top}} \in \mathbb{R}^{B \times 8 \times 7 \times 2560}$
+- baseline action $a_{\text{base}} \in \mathbb{R}^{B \times 8 \times 7}$
+
+FAR projects these features into a refinement space of dimension $R=640$, producing three token groups that feed the cascaded encoder:
+
 ```
-                             Frozen BitVLA (3.5B, 30 layers, W1.58-A8)
-┌──────────────────────────────────────────────────────────────────────┐
-│  Input: RGB(agent+wrist) + instruction + proprio                     │
-│  Outputs (all detached, no gradient):                                │
-│    H₀ image tokens          (B, 512, 2560)   ← layer 0               │
-│    Hₜₒₚ action tokens       (B, 8, 7, 2560)  ← layer 29              │
-│    a_base (frozen baseline action)          (B, 8, 7)                │
-└──────────────────────────────────────────────────────────────────────┘
-                                  │
-                                  ▼
-                   Trainable FAR Refinement Module
-                                  │
-Step 1. Build policy-side tokens (dim R=640)
-──────────────────────────────────────────────────────────────────────
-  A  = action_proj(Hₜₒₚ) + chunk_embed + dim_embed     (B, 56, R)
-  AQ = learned_query + chunk_embed                      (B, 8, R)
-  V  = image_proj(H₀)                                   (B, 512, R)
-
-Step 2. Cascaded Encoder (L=4 layers, each is a FocusCascadedBlock)
-──────────────────────────────────────────────────────────────────────
-  For each layer ℓ, all three branches read the SAME input A_in:
-
-       ┌──────────────┬───────────────────────┬──────────────────┐
-       ▼              ▼                       ▼                  │
-   H_A = SelfAttn   H_AQ = CrossAttn       H_V = FocusAttn       │
-   (A_in, A_in,     (A_in, AQ)             (A_in, V,             │
-    chunk-causal)                           top-k=256 patch,     │
-                                            channel gate +2)     │
-       │              │                       │                  │
-       └──────────────┴───────────┬───────────┘                  │
-                                  ▼                              │
-                 fused = FusionMLP([LN(H_A), LN(H_AQ), LN(H_V)]) │
-                                  │                              │
-                                  ▼                              │
-              A_out = A_in + fused + FFN(A_in + fused)  ─────────┘
-
-Step 3. Token Refinement + Action Decoding
-──────────────────────────────────────────────────────────────────────
-  z_action = A_final.reshape(B, 8, 7, R)
-
-  delta_h = tanh(MLP([z_proj(z_action), top_proj(Hₜₒₚ)])) × 0.30
-
-  refined_tokens = Hₜₒₚ + delta_h        ← residual on frozen features
-
-  a_refine = TrainableActionHead(refined_tokens)
-
-  pose_final = a_base_pose + 0.10 × tanh(a_refine_pose − a_base_pose)
-  grip_final = σ(a_refine_grip_logit)
-
-  Output: a_final = concat(pose_final, grip_final)    (B, 8, 7)
+A   = action_proj(H_top) + chunk_embed + dim_embed      (B, 56, R)   ← flattened action tokens
+Q   = learned_query + chunk_embed                        (B,  8, R)   ← chunk-level queries
+V   = image_proj(H_0)                                    (B, 512, R)  ← visual tokens
 ```
+
+The encoder is a stack of $L=4$ **Cascaded-Attn Blocks**. Each block takes a common action-side input $A_{\text{in}}$ and runs three independent attention branches in parallel — Self-Attn($A_{\text{in}}, A_{\text{in}}$), Cross-Attn($A_{\text{in}}, Q$), and Cross-Attn($A_{\text{in}}, V$) — then fuses their LN-normalized outputs with an MLP (§4.2). The H_V branch is additionally restricted by patch-level top-k=256 selection and an element-wise channel gate (§4.3).
+
+After the encoder, the refined action-side features drive **token refinement**: a small MLP produces a bounded residual $\Delta h$ that is added to the frozen $H_{\text{top}}$, and a trainable action head decodes a refined action $a_{\text{refine}}$. A second anchoring step bounds $a_{\text{refine}}$ to a neighborhood of $a_{\text{base}}$ to yield the **final action** $a_{\text{final}}$ (§4.4).
 
 ### 4.2 Triple Cascaded Attention (avoiding query-side shortcut)
 
@@ -202,21 +168,21 @@ A naive refinement module mixes action tokens and chunk queries in a single atte
 
 FAR avoids this by using **three independent attention branches**, each with its own Q/K/V projections and independent softmax:
 - **H_A**: action → action self-attention with a chunk-causal mask (action at chunk k can only attend to chunks ≤ k)
-- **H_AQ**: action → chunk query cross-attention (learned queries inject chunk-level planning)
-- **H_V**: action → vision focused attention (defined in §4.3)
+- **H_Q**: action → chunk query cross-attention (learned queries inject chunk-level planning)
+- **H_V**: action → vision cross-attention with patch-level top-k selection and channel gating (defined in §4.3)
 
 All three branches consume the **same** input `A_in` (not sequential). Their outputs are normalized separately and fused via a FusionMLP:
 
 ```
-fused = FusionMLP([LN(H_A), LN(H_AQ), LN(H_V)])
+fused = FusionMLP([LN(H_A), LN(H_Q), LN(H_V)])
 A_out = A_in + fused + FFN(A_in + fused)
 ```
 
 The per-branch LN before the MLP prevents any single branch from dominating fusion due to output magnitude differences.
 
-### 4.3 Patch-level Focus with Channel Gate (H_V branch)
+### 4.3 Patch-level Top-k Selection with Channel Gate (H_V branch)
 
-Standard cross-attention over 512 image patches is both compute-heavy and prone to noise from irrelevant regions. FAR applies **per-(batch, head, action token) independent top-k=256 patch selection**:
+Standard cross-attention over 512 image patches is both compute-heavy and prone to noise from irrelevant regions. The H_V branch is an action→vision cross-attention restricted by **per-(batch, head, action token) independent top-k=256 patch selection**:
 
 ```python
 scores = Q @ K.transpose(-2, -1) / sqrt(head_dim)
@@ -288,7 +254,7 @@ with `λ = 1.0`. The grip prediction is unanchored (σ(grip_logit)) to allow the
 | **Encoder** | qformer_dim | 640 |
 | | num_heads | 8 |
 | | num_cascaded_layers | 4 |
-| **Focus Attn** | topk_patches | 256 |
+| **H_V branch** | topk_patches | 256 |
 | | channel_gate_bias_init | +2.0 |
 | **Refinement** | token_delta_scale_init | 0.30 |
 | | pose_residual_scale | 0.10 |
@@ -312,6 +278,7 @@ with `λ = 1.0`. The grip prediction is unanchored (σ(grip_logit)) to allow the
 | Random seed | 7 |
 | Hardware | Single NVIDIA RTX 5090 (32 GB) |
 | Training wall-clock time | ~3 hours |
+| Rollout wall-clock time (500 episodes) | ~2.7 hours |
 
 ### 5.5 Parameter Budget
 
@@ -400,8 +367,8 @@ Tasks 3 and 9 involve **precise 6-DoF pose control for closing cabinets/microwav
 ## 8. Conclusion
 
 We presented **Focused Action Refinement (FAR)**, a trainable refinement module that corrects a frozen 1-bit BitVLA's action predictions on LIBERO-Long. FAR combines three design elements:
-1. Triple cascaded attention (action self, action–chunk-query, action–vision) in independent softmax branches, preventing query-side shortcuts;
-2. Patch-level visual focus with channel-level gating for task-relevant visual evidence routing;
+1. Triple cascaded attention (action self-attention, action–query cross-attention, action–vision cross-attention) in independent softmax branches, preventing query-side shortcuts;
+2. Patch-level top-k visual selection with channel-level gating for task-relevant visual evidence routing;
 3. Dual-level residual anchoring (token-level ±0.30·tanh, pose-level ±0.10·tanh) for closed-loop stability.
 
 FAR achieves **88.6% success** on LIBERO-Long, a **+2.8pt absolute improvement** over the 85.8% frozen baseline, with particularly strong gains on multi-object spatial manipulation tasks (task 4: +16pt; task 6: +12pt). FAR is compact (~120M trainable parameters on a 3.5B frozen backbone, 3.4% parameter ratio) and trains in approximately 3 hours on a single RTX 5090.

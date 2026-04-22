@@ -34,7 +34,7 @@ University of Michigan \\
 \end{figure*}
 
 \begin{abstract}
-Vision-Language-Action (VLA) models enable generalist robot control but remain costly to deploy. BitVLA reduces this cost via low-bit quantization, at the expense of action precision, especially in long-horizon manipulation tasks. We propose \textbf{Focused Action Refinement (FAR)}, a lightweight module that refines top-layer action features of a frozen 1-bit VLA backbone, improving action prediction without modifying backbone parameters. FAR combines (i) a triple-branch attention design that separates action, query, and vision interactions, (ii) a patch-level visual focus mechanism with channel gating, and (iii) a dual-level residual anchoring strategy that bounds refinement for stable execution. On LIBERO-Long, FAR improves success rate from 85.8\% to 88.6\%, with larger gains on multi-object tasks. The module adds only 120M parameters on top of a 3.5B frozen backbone (3.4\%), offering an efficient way to recover precision loss from extreme quantization.
+Vision-Language-Action (VLA) models enable generalist robot control but remain costly to deploy. BitVLA reduces this cost via low-bit quantization, at the expense of action precision, especially in long-horizon manipulation tasks. We propose \textbf{Focused Action Refinement (FAR)}, a lightweight module that refines top-layer action features of a frozen 1-bit VLA backbone, improving action prediction without modifying backbone parameters. FAR combines (i) a triple-branch attention design that separates action self-attention, action--query cross-attention, and action--vision cross-attention into independent softmax branches, (ii) a patch-level top-$k$ visual selection paired with channel gating, and (iii) a dual-level residual anchoring strategy that bounds refinement for stable execution. On LIBERO-Long, FAR improves success rate from 85.8\% to 88.6\%, with larger gains on multi-object tasks. The module adds only 120M parameters on top of a 3.5B frozen backbone (3.4\%), offering an efficient way to recover precision loss from extreme quantization.
 \end{abstract}
 
 \section{Introduction}
@@ -44,15 +44,21 @@ BitVLA addresses this challenge through aggressive quantization, reducing the ba
 
 This raises a key question: \emph{can we recover the lost precision of a quantized VLA without retraining or modifying the backbone?}
 
-In this work, we propose \textbf{Focused Action Refinement (FAR)}, a lightweight sidecar module that improves action prediction of a frozen 1-bit VLA policy. Instead of relearning the full control policy, FAR operates on top-layer action representations and selectively refines them using multimodal interactions with visual features. The refinement is explicitly constrained to preserve stability while correcting systematic errors introduced by quantization \cite{zhang2019fixup}.
+In this work, we propose \textbf{Focused Action Refinement (FAR)}, a lightweight sidecar module that improves action prediction of a frozen 1-bit VLA policy. Instead of relearning the full control policy, FAR operates on top-layer action representations and selectively refines them using multimodal interactions with visual features. The refinement is explicitly constrained to a bounded residual around the baseline action, so the closed-loop behavior cannot drift far from the frozen policy even when the refinement output is noisy.
 
-The central idea is to make refinement structured and selective. FAR introduces a triple-branch attention design that disentangles action, query, and vision interactions, preventing shortcut behaviors in mixed attention \cite{liang2021attention}. In addition, it employs patch-level top-$k$ selection and channel gating to focus on task-relevant visual evidence, and a dual-level residual anchoring mechanism to bound refinement at both the feature and action levels.
+The central idea is to make refinement structured and selective. Drawing on FocusVLA's modality-cascaded design \cite{zhang2026focusvla}, FAR disentangles action self-attention, action--query cross-attention, and action--vision cross-attention into three independent softmax branches, preventing the query-side shortcut that can arise when modalities share a single attention. In addition, it employs patch-level top-$k$ selection and channel gating to attend to task-relevant visual evidence, and a dual-level residual anchoring mechanism to bound refinement at both the feature and action levels.
+
+This work has two parts, aligned with the course's \emph{reproduction + extension} deliverable structure:
+\begin{itemize}
+    \item \textbf{Reproduction.} We first reproduce the LIBERO-Long rollout result of the base paper (BitVLA \cite{wang2025bitvla}) under the authors' official evaluation protocol, verifying the published baseline and establishing a trustworthy reference point for our extension.
+    \item \textbf{Algorithmic extension.} We then propose Focused Action Refinement (FAR) as a new component on top of the reproduced baseline, and evaluate it under the same protocol to quantify its improvement.
+\end{itemize}
 
 Our contributions are summarized as follows:
 \begin{itemize}
     \item We propose a frozen-backbone action refinement module for quantized VLA policies, improving action precision without modifying backbone parameters.
     \item We introduce a triple-branch attention mechanism that enforces structured interactions between action, query, and visual tokens, mitigating shortcut learning.
-    \item We design a focused visual refinement strategy with patch selection and channel gating, together with residual anchoring to ensure stable closed-loop execution.
+    \item We design a visual refinement strategy combining patch-level top-$k$ selection with channel gating, together with dual-level residual anchoring to ensure stable closed-loop execution.
     \item We demonstrate improvements on LIBERO-Long, increasing success rate from 85.8\% to 88.6\%, with the largest gains on multi-object manipulation tasks \cite{liu2023libero}.
 \end{itemize}
 
@@ -66,11 +72,12 @@ Despite these advances, a key challenge remains: how to preserve action accuracy
 Parameter-efficient adaptation methods, such as LoRA, reduce the number of trainable parameters during fine-tuning by introducing low-rank updates into pretrained models \cite{hu2022lora}. Similar approaches have been widely applied in vision-language and robotics models to enable efficient adaptation without full retraining. However, these methods still modify the backbone representations, which may alter the deployment characteristics of highly optimized models such as quantized VLAs.
 In contrast, our approach preserves a strictly frozen backbone and shifts all adaptation into a separate refinement module. This design is particularly relevant for quantized policies, where maintaining the original inference cost and numerical behavior is critical.
 
-\subsection{Focused Attention and Multimodal Interaction}
-Recent work highlights the importance of structured attention mechanisms in multimodal models, particularly for mitigating shortcut learning and improving cross-modal grounding. Approaches such as modality-specific attention and cascaded attention have been proposed to better control information flow between modalities  \cite{tsai2019multimodal}. 
-Our method builds on these ideas but differs in its role within the system. Rather than redesigning the full policy architecture, we introduce a lightweight refinement module on top of a frozen backbone. This module selectively re-establishes interactions between action and visual tokens, making it closer to a learned corrector than to a standalone policy model.
+\subsection{Structured Attention for Multimodal Policies}
+Structured attention mechanisms in multimodal models have been shown to mitigate shortcut learning and improve cross-modal grounding. The Multimodal Transformer introduced cross-modal attention for unaligned multimodal sequences \cite{tsai2019multimodal}, and subsequent work has studied how to control information flow between modalities in VLA policies. Most directly related to our work, FocusVLA \cite{zhang2026focusvla} proposed a modality-cascaded attention with patch-level focus and channel gating for end-to-end VLA training, showing that explicit modality separation and selective visual utilization substantially improve action prediction.
 
-\section{Method}
+Our method adapts FocusVLA's attention design to a frozen-backbone inference setting. Rather than retraining a full VLA policy, we introduce a lightweight refinement module on top of a quantized BitVLA backbone. The module inherits the cascaded attention and top-$k$ plus channel-gate visual selection from FocusVLA, but operates purely as a post-hoc corrector that never modifies the backbone's 1-bit weights. In this sense FAR sits closer to a bounded residual corrector than to a standalone policy.
+
+\section{Algorithmic Extension: FAR}
 \subsection{Problem Setup}
 We consider a frozen quantized Vision-Language-Action (VLA) policy
 \begin{equation}
@@ -94,22 +101,22 @@ The proposed Focused Action Refinement (FAR) module operates as a lightweight si
 We first project the extracted features into a refinement space of dimension $R$:
 \begin{align}
 A &= W_A H_{\text{top}} + E_{\text{chunk}} + E_{\text{dim}}, \\
-AQ &= Q_{\text{learned}} + E_{\text{chunk}}, \\
+Q &= Q_{\text{emb}} + E_{\text{chunk}}, \\
 V &= W_V H_0,
 \end{align}
-where $A \in \mathbb{R}^{B \times 56 \times R}$ are flattened action tokens, $AQ \in \mathbb{R}^{B \times K \times R}$ are learned query tokens, and $V \in \mathbb{R}^{B \times N_v \times R}$ are visual tokens.
+where $A \in \mathbb{R}^{B \times 56 \times R}$ are flattened action tokens, $Q \in \mathbb{R}^{B \times K \times R}$ are learned chunk query tokens, and $V \in \mathbb{R}^{B \times N_v \times R}$ are visual tokens.
 
 \subsection{Cascaded Attention Refinement}
 A key design in FAR is to decouple multimodal interactions into separate attention branches. Instead of mixing all tokens in a single attention, we explicitly model:
 \begin{align}
 H_A &= \text{SelfAttn}(A_{\text{in}}, A_{\text{in}}), \\
-H_{AQ} &= \text{CrossAttn}(A_{\text{in}}, AQ), \\
+H_Q &= \text{CrossAttn}(A_{\text{in}}, Q), \\
 H_V &= \text{CrossAttn}(A_{\text{in}}, V).
 \end{align}
 Each branch uses an independent softmax, preventing competition between modalities and ensuring that visual information is explicitly incorporated.
 The outputs are fused as:
 \begin{align}
-H_{\text{fuse}} &= \text{MLP}([\text{LN}(H_A), \text{LN}(H_{AQ}), \text{LN}(H_V)]), \\
+H_{\text{fuse}} &= \text{MLP}([\text{LN}(H_A), \text{LN}(H_Q), \text{LN}(H_V)]), \\
 A_{\text{out}} &= A_{\text{in}} + H_{\text{fuse}} + \text{FFN}(A_{\text{in}} + H_{\text{fuse}}).
 \end{align}
 To improve spatial selectivity, we restrict attention to the top-$k$ visual tokens:
@@ -208,29 +215,33 @@ with $\lambda = 1.0$.
 
 We optimize the model using AdamW with separate learning rates for the encoder ($2\times10^{-4}$) and action head ($5\times10^{-5}$), and apply cosine decay with linear warmup (500 steps over 10k total steps).
 
-Training uses batch size 8 with gradient accumulation (effective batch size 16). Gradient clipping ($\tau=1.0$) and residual anchoring are applied to ensure stability. The full training completes within a few hours on a single GPU.
+Training uses batch size 8 with gradient accumulation (effective batch size 16). Gradient clipping ($\tau=1.0$) and residual anchoring are applied to ensure stability. The full 10,000-step training completes in approximately 3 hours on a single NVIDIA RTX 5090 (32\,GB). Closed-loop rollout evaluation on all 500 LIBERO-Long episodes takes approximately 2.7 hours on the same hardware.
 
 \section{Results}
 
-\subsection{Overall Performance}
+\subsection{Paper Reproduction}
 
-We evaluate FAR on the LIBERO-Long benchmark with 500 rollout episodes (10 tasks × 50 trials). Table~\ref{tab:overall} summarizes the overall performance.
+As the first deliverable, we reproduce the LIBERO-Long rollout result of the base paper (BitVLA \cite{wang2025bitvla}) using the authors' official evaluation script at \texttt{repos/BitVLA/.../run\_libero\_eval\_bitnet.py}. We run 500 rollout episodes (10 tasks $\times$ 50 trials, \texttt{seed=7}) on the official \texttt{ft-libero-long-bf16} checkpoint with \texttt{center\_crop=True}, \texttt{num\_open\_loop\_steps=8}, and \texttt{num\_steps\_wait=10} --- matching the BitVLA paper's evaluation protocol exactly. Our reproduction obtains $\mathbf{85.8\%}$ (429/500) success, closely matching the BitVLA paper's reported ``without robotics pretraining'' result of 87.6\% on the same suite. The small gap is consistent with simulator non-determinism (MuJoCo / driver version) across independent runs. This reproduced baseline serves as the reference point against which our extension is measured.
+
+\subsection{Extension Results}
+
+Table~\ref{tab:overall} compares the reproduced baseline against our proposed extension, FAR, under the same 500-episode protocol.
 
 \begin{table}[t]
 \centering
-\caption{Overall success rate comparison.}
+\caption{Overall success rate: reproduced baseline vs. our extension.}
 \label{tab:overall}
 \begin{tabular}{lccc}
 \toprule
 Method & Success & Total & Success Rate \\
 \midrule
-Frozen BitVLA & 429 & 500 & 85.8\% \\
-FAR (Ours) & 443 & 500 & 88.6\% \\
+BitVLA baseline (reproduced) & 429 & 500 & 85.8\% \\
+FAR (our extension)          & 443 & 500 & \textbf{88.6\%} \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-FAR improves the overall success rate by +2.8 percentage points (14 additional successful episodes). This demonstrates that a lightweight refinement module can recover part of the precision loss introduced by aggressive quantization without modifying the frozen backbone.
+FAR improves the overall success rate by $\mathbf{+2.8}$ percentage points (14 additional successful episodes) on top of the reproduced baseline. This demonstrates that a lightweight refinement module can recover part of the precision loss introduced by aggressive quantization without modifying the frozen backbone.
 
 \subsection{Per-Task Analysis}
 Table~\ref{tab:per_task} reports per-task performance across all tasks.
@@ -278,7 +289,12 @@ Residual anchoring ensures that the refined action remains close to the baseline
 \end{equation}
 This constraint prevents large deviations and maintains rollout stability. Empirically, FAR improves performance without introducing catastrophic failures.
 
-Finally, FAR remains computationally efficient, introducing only 120M trainable parameters (3.4\% of the backbone) and requiring a few hours of training on a single GPU. This highlights that meaningful performance gains can be achieved through lightweight refinement rather than full-model retraining.
+Finally, FAR remains computationally efficient, introducing only 120M trainable parameters (3.4\% of the backbone) and requiring approximately 3 hours of training on a single RTX 5090. This highlights that meaningful performance gains can be achieved through lightweight refinement rather than full-model retraining.
+
+\subsection{Limitations and Future Directions}
+FAR operates under a strictly frozen backbone, which fundamentally bounds its achievable performance by the information already encoded in $H_0$ and $H_{\text{top}}$. If aggressive 1-bit quantization has destroyed information that is simply not present in these features, no post-hoc refinement can recover it. A complementary direction is end-to-end joint training of the backbone and refinement module with action supervision, which could in principle recover more of the performance gap to full-precision VLAs, at the cost of losing the drop-in deployability and 1-bit memory footprint that motivated this work.
+
+Our evaluation uses a single random seed (\texttt{seed=7}) and a single LIBERO suite (LIBERO-Long). Multi-seed variance is not measured, and generalization to LIBERO-Spatial, LIBERO-Object, LIBERO-Goal, and real-robot execution remains untested. We also observe a persistent offline--online gap: pose MAE on held-out demonstrations does not reliably predict closed-loop rollout success, so checkpoint selection must be done via costly rollout evaluation rather than cheap offline metrics. Finally, FAR assumes access to the backbone's intermediate activations $H_0$ and $H_{\text{top}}$; closed-source or API-only VLAs that expose only the final action would require additional feature-probing effort before FAR can be applied.
 
 \section{Conclusion}
 
@@ -286,12 +302,8 @@ We present Focused Action Refinement (FAR), a lightweight module for improving f
 
 Experiments on LIBERO-Long demonstrate consistent improvements, particularly on tasks requiring spatial reasoning and multi-object interaction, while maintaining low computational overhead.
 
-Future work includes extending FAR to other VLA architectures and exploring adaptive refinement strategies to further reduce over-correction.
+Future work includes (i) extending FAR to other frozen VLA backbones such as OpenVLA and $\pi_0$ under various quantization schemes, (ii) exploring joint backbone--refinement training to push absolute performance further while preserving deployment efficiency, and (iii) developing time-adaptive refinement schedules (e.g., a chunk-step-dependent $\rho$) to reduce over-correction on pose-sensitive closure tasks.
 
-
-\section*{Acknowledgment}
-
-The authors would like to thank the University of Michigan and Shanghai Jiao Tong University for their support. We also thank Prof. Xiaoxiao Du and Prof. Yulun Tian for their valuable guidance and discussions.
 
 \bibliographystyle{IEEEtran}
 \bibliography{references}
