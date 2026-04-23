@@ -453,3 +453,18 @@ python scripts/rollout.py \
 - Training time: **3 hours** on single RTX 5090
 - No backbone modification, no quantization-aware training
 - Worst-case safety: pose deviation bounded by ±0.10 regardless of module output
+
+---
+
+## 12. Rollout Videos (side-by-side with Baseline)
+
+[`videos_comparison/`](videos_comparison/) contains 36 representative episode pairs (72 MP4s, ~14 MB total), sampled from the same seed=7 500-episode rollout. Episode numbering is global (1..500) and matches the Baseline rollout at `repos/BitVLA/openvla-oft/rollouts/2026_04_19/`, so the same `episode=N` is the same task on the same initial state — a direct side-by-side comparison.
+
+For each of the 10 tasks we pick one representative pair per category when available:
+
+- `both_success/` — both Baseline and FAR succeed (shared easy cases)
+- `both_fail/` — both fail (fundamental difficulty, not a FAR win/loss)
+- `base_ok__far_fail/` — refinement over-corrected (most common on Task 3 / Task 9)
+- `base_fail__far_ok/` — refinement recovered precision (the Task 4 / Task 6 gains)
+
+The FAR videos come from the 2026-04-22 re-run (439/500 = 87.8%, within single-seed noise of the 443/500 = 88.6% headline result from the 2026-04-17 run — the original run did not save videos). See [`videos_comparison/README.md`](videos_comparison/README.md) for per-task category counts and the specific episode numbers picked.
